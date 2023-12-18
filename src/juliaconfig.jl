@@ -44,7 +44,7 @@ function ldlibs()
     libnames = isdebugbuild() ? "-ljulia-debug -ljulia-internal-debug" : 
                                 "-ljulia       -ljulia-internal"
     if Sys.islinux()
-        return "-Wl,-rpath-link,$(shell_escape(julia_libdir())) -Wl,-rpath-link,$(shell_escape(julia_private_libdir())) $libnames"
+        return "-Wl,-rpath-link,$(shell_escape(julia_libdir())) -Wl,-rpath-link,$(shell_escape(julia_private_libdir())) -Wl,-z,relro,-z,now $libnames"
     elseif Sys.iswindows()
         return "$libnames -lopenlibm"
     else
@@ -52,13 +52,20 @@ function ldlibs()
     end
 end
 
+# -D_FORTIFY_SOURCE=3 (or =2 for older glibcs)
+# -D_GLIBCXX_ASSERTIONS
+# -ftrivial-auto-var-init=pattern
+# -fPIE -pie -Wl,-z,relro,-z,now
+# -fstack-protector-strong
+# -fstack-clash-protection
+# -fcf-protection=full (x86 GNU/Linux only)
 function cflags()
     flags = IOBuffer()
     print(flags, "-O2 -std=gnu99")
     include = shell_escape(julia_includedir())
     print(flags, " -I", include)
     if Sys.isunix()
-        print(flags, " -fPIC")
+        print(flags, "-D_FORTIFY_SOURCE=3 -fPIC -pie -fPIE -fstack-clash-protection -fstack-protector-strong -ftrivial-auto-var-init=pattern -fcf-protection=full")
     end
     return String(take!(flags))
 end
