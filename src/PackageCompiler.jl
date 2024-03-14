@@ -58,6 +58,35 @@ function march()
 end
 
 
+Base.@kwdef struct Conf
+    dest_dir::String = ""
+    lib_name = nothing
+    precompile_execution_file::Union{String,Vector{String}} = String[]
+    precompile_statements_file::Union{String,Vector{String}} = String[]
+    incremental::Bool = false
+    filter_stdlibs::Bool = false
+    force::Bool = false
+    header_files::Vector{String} = String[]
+    julia_init_c_file::Union{String,Vector{String}} = default_julia_init()
+    julia_init_h_file::Union{String,Vector{String}} = default_julia_init_header()
+    version::Union{String,VersionNumber,Nothing} = nothing
+    compat_level::String = "major"
+    cpu_target::String = default_app_cpu_target()
+    include_lazy_artifacts::Bool = false
+    sysimage_build_args::Cmd = ``
+    include_transitive_dependencies::Bool = true
+    include_preferences::Bool = true
+    script::Union{Nothing,String} = nothing
+    base_sysimage::Union{Nothing,String} = nothing
+    package_dir::String = ""
+    app_dir::String = ""
+    executables::Union{Nothing,Vector{Pair{String,String}}} = nothing
+    c_driver_program::String = String(DEFAULT_EMBEDDING_WRAPPER)
+    package_or_project::String
+end
+
+
+
 #############
 # Pkg utils #
 #############
@@ -538,19 +567,43 @@ function create_sysimage(packages::Union{Nothing, Symbol, Vector{String}, Vector
                          compat_level::String="major",
                          extra_precompiles::String = "",
                          )
+    conf = Conf(; packages,
+        sysimage_path,
+        project,
+        precompile_execution_file,
+        precompile_statements_file,
+        incremental,
+        filter_stdlibs,
+        cpu_target,
+        script,
+        sysimage_build_args,
+        include_transitive_dependencies,
+        base_sysimage,
+        julia_init_c_file,
+        julia_init_h_file,
+        version,
+        soname,
+        compat_level,
+        extra_precompiles)
+
+    create_sysimage(conf)
+end
+
+
+function create_sysimage(conf::Conf)
     # We call this at the very beginning to make sure that the user has a compiler available. Therefore, if no compiler
     # is found, we throw an error immediately, instead of making the user wait a while before the error is thrown.
     get_compiler_cmd()
 
-    if isdir(sysimage_path)
+    if isdir(conf.sysimage_path)
         error("The provided sysimage_path is a directory: $(sysimage_path). Please specify a full path including the sysimage filename.")
     end
 
-    if filter_stdlibs && incremental
+    if conf.filter_stdlibs && conf.incremental
         error("must use `incremental=false` to use `filter_stdlibs=true`")
     end
 
-    ctx = create_pkg_context(project)
+    ctx = create_pkg_context(conf.project)
 
     if packages === nothing
         packages = collect(keys(ctx.env.project.deps))
