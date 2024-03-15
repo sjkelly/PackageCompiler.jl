@@ -59,30 +59,35 @@ end
 
 
 Base.@kwdef struct Conf
-    dest_dir::String = ""
-    lib_name = nothing
-    precompile_execution_file::Union{String,Vector{String}} = String[]
-    precompile_statements_file::Union{String,Vector{String}} = String[]
-    incremental::Bool = false
-    filter_stdlibs::Bool = false
-    force::Bool = false
-    header_files::Vector{String} = String[]
-    julia_init_c_file::Union{String,Vector{String}} = default_julia_init()
-    julia_init_h_file::Union{String,Vector{String}} = default_julia_init_header()
-    version::Union{String,VersionNumber,Nothing} = nothing
-    compat_level::String = "major"
-    cpu_target::String = default_app_cpu_target()
-    include_lazy_artifacts::Bool = false
-    sysimage_build_args::Cmd = ``
-    include_transitive_dependencies::Bool = true
-    include_preferences::Bool = true
-    script::Union{Nothing,String} = nothing
-    base_sysimage::Union{Nothing,String} = nothing
+    packages::Union{Nothing, Symbol, Vector{String}, Vector{Symbol}}=nothing
+    sysimage_path::String = ""
+    project::String=dirname(active_project())
+    precompile_execution_file::Union{String, Vector{String}}=String[]
+    precompile_statements_file::Union{String, Vector{String}}=String[]
+    incremental::Bool=true
+    filter_stdlibs::Bool=false
+    cpu_target::String=NATIVE_CPU_TARGET
+    script::Union{Nothing, String}=nothing
+    sysimage_build_args::Cmd=``
+    include_transitive_dependencies::Bool=true
+    base_sysimage::Union{Nothing, String}=nothing
+    soname=nothing
+    compat_level::String="major"
+    extra_precompiles::String = ""
     package_dir::String = ""
     app_dir::String = ""
-    executables::Union{Nothing,Vector{Pair{String,String}}} = nothing
-    c_driver_program::String = String(DEFAULT_EMBEDDING_WRAPPER)
-    package_or_project::String
+    executables::Union{Nothing, Vector{Pair{String, String}}}=nothing
+    force::Bool=false
+    c_driver_program::String=String(DEFAULT_EMBEDDING_WRAPPER)
+    include_lazy_artifacts::Bool=false
+    include_preferences::Bool=true
+    package_or_project::String = ""
+    dest_dir::String=""
+    lib_name=nothing
+    header_files::Vector{String} = String[]
+    julia_init_c_file::Union{Nothing, String, Vector{String}}=nothing
+    julia_init_h_file::Union{Nothing, String, Vector{String}}=nothing
+    version::Union{String,VersionNumber,Nothing}=nothing
 end
 
 
@@ -596,7 +601,7 @@ function create_sysimage(conf::Conf)
     get_compiler_cmd()
 
     if isdir(conf.sysimage_path)
-        error("The provided sysimage_path is a directory: $(sysimage_path). Please specify a full path including the sysimage filename.")
+        error("The provided sysimage_path is a directory: $(conf.sysimage_path). Please specify a full path including the sysimage filename.")
     end
 
     if conf.filter_stdlibs && conf.incremental
@@ -605,39 +610,41 @@ function create_sysimage(conf::Conf)
 
     ctx = create_pkg_context(conf.project)
 
-    if packages === nothing
-        packages = collect(keys(ctx.env.project.deps))
+    packages = if conf.packages === nothing
+        p = collect(keys(ctx.env.project.deps))
         if ctx.env.pkg !== nothing
-            push!(packages, ctx.env.pkg.name)
+            push!(p, ctx.env.pkg.name)
         end
+        string.(vcat(p))
+    else
+        string.(vcat(conf.packages))
     end
 
-    packages = string.(vcat(packages))
-    precompile_execution_file  = vcat(precompile_execution_file)
-    precompile_statements_file = vcat(precompile_statements_file)
+    precompile_execution_file  = vcat(conf.precompile_execution_file)
+    precompile_statements_file = vcat(conf.precompile_statements_file)
 
     check_packages_in_project(ctx, packages)
 
     # Instantiate the project
 
-    @debug "instantiating project at $(repr(project))"
+    @debug "instantiating project at $(repr(conf.project))"
     Pkg.instantiate(ctx, verbose=true, allow_autoprecomp = false)
 
-    if !incremental
-        if base_sysimage !== nothing
+    if !conf.incremental
+        if conf.base_sysimage !== nothing
             error("cannot specify `base_sysimage`  when `incremental=false`")
         end
-        sysimage_stdlibs = filter_stdlibs ? gather_stdlibs_project(ctx) : stdlibs_in_sysimage()
-        base_sysimage = create_fresh_base_sysimage(sysimage_stdlibs; cpu_target, sysimage_build_args)
+        sysimage_stdlibs = conf.filter_stdlibs ? gather_stdlibs_project(ctx) : stdlibs_in_sysimage()
+        base_sysimage = create_fresh_base_sysimage(sysimage_stdlibs; conf.cpu_target, conf.sysimage_build_args)
     else
-        base_sysimage = something(base_sysimage, unsafe_string(Base.JLOptions().image_file))
+        base_sysimage = something(conf.base_sysimage, unsafe_string(Base.JLOptions().image_file))
     end
 
-    ensurecompiled(project, packages, base_sysimage)
+    ensurecompiled(conf.project, packages, base_sysimage)
 
     packages_sysimg = Set{Base.PkgId}()
 
-    if include_transitive_dependencies
+    if conf.include_transitive_dependencies
         # We are not sure that packages actually load their dependencies on `using`
         # but we still want them to end up in the sysimage. Therefore, explicitly
         # collect their dependencies, recursively.
@@ -679,46 +686,52 @@ function create_sysimage(conf::Conf)
     object_file = tempname() * ".o"
 
     create_sysimg_object_file(object_file, packages, packages_sysimg;
-                            project,
+                            conf.project,
                             base_sysimage,
                             precompile_execution_file,
                             precompile_statements_file,
-                            cpu_target,
-                            script,
-                            sysimage_build_args,
-                            extra_precompiles,
-                            incremental)
+                            conf.cpu_target,
+                            conf.script,
+                            conf.sysimage_build_args,
+                            conf.extra_precompiles,
+                            conf.incremental)
     object_files = [object_file]
-    if julia_init_c_file !== nothing
-        if julia_init_c_file isa String
-            julia_init_c_file = [julia_init_c_file]
+
+    
+    if conf.julia_init_c_file !== nothing
+        if conf.julia_init_c_file isa String
+            julia_init_c_file = [conf.julia_init_c_file]
         end
+
         mktempdir() do include_dir
-            if julia_init_h_file !== nothing
-                if julia_init_h_file isa String
-                    julia_init_h_file = [julia_init_h_file]
+            if conf.julia_init_h_file !== nothing
+                julia_init_h_file = if conf.julia_init_h_file isa String
+                    [conf.julia_init_h_file]
+                else
+                    conf.julia_init_h_file
                 end
                 for f in julia_init_h_file
                     cp(f, joinpath(include_dir, basename(f)))
                 end
             end
             for f in julia_init_c_file
-                filename = compile_c_init_julia(f, basename(sysimage_path), include_dir)
+                filename = compile_c_init_julia(f, basename(conf.sysimage_path), include_dir)
                 push!(object_files, filename)
             end
         end
     end
+
     create_sysimg_from_object_file(object_files,
-                                sysimage_path;
-                                compat_level,
-                                version,
-                                soname)
+                                conf.sysimage_path;
+                                conf.compat_level,
+                                conf.version,
+                                conf.soname)
 
     rm(object_file; force=true)
 
     if Sys.isapple()
-        cd(dirname(abspath(sysimage_path))) do
-            sysimage_file = basename(sysimage_path)
+        cd(dirname(abspath(conf.sysimage_path))) do
+            sysimage_file = basename(conf.sysimage_path)
             cmd = `install_name_tool -id @rpath/$(sysimage_file) $sysimage_file`
             @debug "running $cmd"
             run(cmd)
