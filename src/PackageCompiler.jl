@@ -901,35 +901,57 @@ function create_app(package_dir::String,
                     include_transitive_dependencies::Bool=true,
                     include_preferences::Bool=true,
                     script::Union{Nothing, String}=nothing)
+    conf = Conf(;package_dir,
+                 app_dir,
+                 executables,
+                 precompile_execution_file,
+                 precompile_statements_file,
+                 incremental,
+                 filter_stdlibs,
+                 force,
+                 c_driver_program,
+                 cpu_target,
+                 include_lazy_artifacts,
+                 sysimage_build_args,
+                 include_transitive_dependencies,
+                 include_preferences,
+                 script)
+    create_app(conf)
+end
+
+function create_app(conf::Conf)
     warn_official()
-    if filter_stdlibs && incremental
+    if conf.filter_stdlibs && conf.incremental
         error("must use `incremental=false` to use `filter_stdlibs=true`")
     end
     # We call this at the very beginning to make sure that the user has a compiler available. Therefore, if no compiler
     # is found, we throw an error immediately, instead of making the user wait a while before the error is thrown.
     get_compiler_cmd()
 
-    ctx = create_pkg_context(package_dir)
+    ctx = create_pkg_context(conf.package_dir)
     ctx.env.pkg === nothing && error("expected package to have a `name` and `uuid`")
     Pkg.instantiate(ctx, verbose=true, allow_autoprecomp = false)
 
-    if executables === nothing
-        executables = [ctx.env.pkg.name => "julia_main"]
+    executables = if conf.executables === nothing
+        [ctx.env.pkg.name => "julia_main"]
+    else
+        conf.executables
     end
-    try_rm_dir(app_dir; force)
+
+    try_rm_dir(conf.app_dir; conf.force)
     stdlibs = gather_stdlibs_project(ctx)
-    if !filter_stdlibs
+    if !conf.filter_stdlibs
         stdlibs = unique(vcat(stdlibs, stdlibs_in_sysimage()))
     end
-    bundle_julia_libraries(app_dir, stdlibs)
-    bundle_julia_libexec(ctx, app_dir)
-    bundle_julia_executable(app_dir)
-    bundle_artifacts(ctx, app_dir; include_lazy_artifacts)
-    bundle_project(ctx, app_dir)
-    include_preferences && bundle_preferences(ctx, app_dir)
-    bundle_cert(app_dir)
+    bundle_julia_libraries(conf.app_dir, stdlibs)
+    bundle_julia_libexec(ctx, conf.app_dir)
+    bundle_julia_executable(conf.app_dir)
+    bundle_artifacts(ctx, conf.app_dir; conf.include_lazy_artifacts)
+    bundle_project(ctx, conf.app_dir)
+    conf.include_preferences && bundle_preferences(ctx, conf.app_dir)
+    bundle_cert(conf.app_dir)
 
-    sysimage_path = joinpath(app_dir, "lib", "julia", "sys." * Libdl.dlext)
+    sysimage_path = joinpath(conf.app_dir, "lib", "julia", "sys." * Libdl.dlext)
 
     package_name = ctx.env.pkg.name
     project = dirname(ctx.env.project_file)
@@ -945,18 +967,18 @@ function create_app(package_dir::String,
     push!(precompiles, "precompile(Tuple{typeof(popfirst!), Vector{String}})")
 
     create_sysimage([package_name]; sysimage_path, project,
-                    incremental,
-                    filter_stdlibs,
-                    precompile_execution_file,
-                    precompile_statements_file,
-                    cpu_target,
-                    sysimage_build_args,
-                    include_transitive_dependencies,
+                    conf.incremental,
+                    conf.filter_stdlibs,
+                    conf.precompile_execution_file,
+                    conf.precompile_statements_file,
+                    conf.cpu_target,
+                    conf.sysimage_build_args,
+                    conf.include_transitive_dependencies,
                     extra_precompiles = join(precompiles, "\n"),
-                    script)
+                    conf.script)
 
     for (app_name, julia_main) in executables
-        create_executable_from_sysimg(joinpath(app_dir, "bin", app_name), c_driver_program, string(package_name, ".", julia_main))
+        create_executable_from_sysimg(joinpath(conf.app_dir, "bin", app_name), conf.c_driver_program, string(package_name, ".", julia_main))
     end
 end
 
