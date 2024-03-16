@@ -1109,59 +1109,87 @@ function create_library(package_or_project::String,
                         base_sysimage::Union{Nothing, String}=nothing
                         )
 
+    conf = Conf(;package_or_project,
+            dest_dir,
+            lib_name,
+            precompile_execution_file,
+            precompile_statements_file,
+            incremental,
+            filter_stdlibs,
+            force,
+            header_files,
+            julia_init_c_file,
+            julia_init_h_file,
+            version,
+            compat_level,
+            cpu_target,
+            include_lazy_artifacts,
+            sysimage_build_args,
+            include_transitive_dependencies,
+            include_preferences,
+            script,
+            base_sysimage
+            )
+    create_library(conf)
+end
+
+function create_library(conf::Conf)
 
     warn_official()
 
     # Add init header files to list of bundled header files if not already present
-    if julia_init_h_file isa String
-        julia_init_h_file = [julia_init_h_file]
+    if conf.julia_init_h_file isa String
+        julia_init_h_file = [conf.julia_init_h_file]
     end
+    header_files = String[]
     for f in julia_init_h_file
-        if !(f in header_files)
+        if !(f in conf.header_files)
             push!(header_files, f)
         end
     end
 
-    if version isa String
-        version = parse(VersionNumber, version)
+    if conf.version isa String
+        version = parse(VersionNumber, conf.version)
     end
 
-    ctx = create_pkg_context(package_or_project)
-    if ctx.env.pkg === nothing && lib_name === nothing
+    ctx = create_pkg_context(conf.package_or_project)
+    if ctx.env.pkg === nothing && conf.lib_name === nothing
         error("expected either package with a `name` and `uuid`, or non-empty `lib_name`")
     end
     Pkg.instantiate(ctx, verbose=true, allow_autoprecomp = false)
 
-    if lib_name === nothing
-        lib_name = ctx.env.pkg.name
+    lib_name = if conf.lib_name === nothing
+        ctx.env.pkg.name
+    else
+        conf.lib_name
     end
-    try_rm_dir(dest_dir; force)
-    mkpath(dest_dir)
+    try_rm_dir(conf.dest_dir; conf.force)
+    mkpath(conf.dest_dir)
     stdlibs = gather_stdlibs_project(ctx)
-    if !filter_stdlibs
+    if !conf.filter_stdlibs
         stdlibs = unique(vcat(stdlibs, stdlibs_in_sysimage()))
     end
-    bundle_julia_libraries(dest_dir, stdlibs)
-    bundle_julia_libexec(ctx, dest_dir)
-    bundle_artifacts(ctx, dest_dir; include_lazy_artifacts)
-    bundle_headers(dest_dir, header_files)
-    bundle_project(ctx, dest_dir)
-    include_preferences && bundle_preferences(ctx, dest_dir)
-    bundle_cert(dest_dir)
+    bundle_julia_libraries(conf.dest_dir, stdlibs)
+    bundle_julia_libexec(ctx, conf.dest_dir)
+    bundle_artifacts(ctx, conf.dest_dir; conf.include_lazy_artifacts)
+    bundle_headers(conf.dest_dir, conf.header_files)
+    bundle_project(ctx, conf.dest_dir)
+    conf.include_preferences && bundle_preferences(ctx, conf.dest_dir)
+    bundle_cert(conf.dest_dir)
 
-    lib_dir = Sys.iswindows() ? joinpath(dest_dir, "bin") : joinpath(dest_dir, "lib")
+    lib_dir = Sys.iswindows() ? joinpath(conf.dest_dir, "bin") : joinpath(conf.dest_dir, "lib")
 
-    sysimg_file = get_library_filename(lib_name; version)
+    sysimg_file = get_library_filename(lib_name; conf.version)
     sysimg_path = joinpath(lib_dir, sysimg_file)
-    compat_file = get_library_filename(lib_name; version, compat_level)
+    compat_file = get_library_filename(lib_name; conf.version, conf.compat_level)
     soname = (Sys.isunix() && !Sys.isapple()) ? compat_file : nothing
 
-    create_sysimage_workaround(ctx, sysimg_path, precompile_execution_file,
-        precompile_statements_file, incremental, filter_stdlibs, cpu_target;
-        sysimage_build_args, include_transitive_dependencies, julia_init_c_file,
-        julia_init_h_file, version, soname, script, base_sysimage)
+    create_sysimage_workaround(ctx, sysimg_path, conf.precompile_execution_file,
+        conf.precompile_statements_file, conf.incremental, conf.filter_stdlibs, conf.cpu_target;
+        conf.sysimage_build_args, conf.include_transitive_dependencies, conf.julia_init_c_file,
+        julia_init_h_file, conf.version, soname, conf.script, conf.base_sysimage)
 
-    if version !== nothing && Sys.isunix()
+    if conf.version !== nothing && Sys.isunix()
         cd(dirname(sysimg_path)) do
             base_file = get_library_filename(lib_name)
             @debug "creating symlinks for $compat_file and $base_file"
