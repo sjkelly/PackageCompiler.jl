@@ -58,36 +58,119 @@ function march()
 end
 
 
-Base.@kwdef struct Conf
-    packages::Union{Nothing, Symbol, Vector{String}, Vector{Symbol}}=nothing
-    sysimage_path::String = ""
-    project::String=dirname(active_project())
-    precompile_execution_file::Union{String, Vector{String}}=String[]
-    precompile_statements_file::Union{String, Vector{String}}=String[]
-    incremental::Bool=true
-    filter_stdlibs::Bool=false
-    cpu_target::String=NATIVE_CPU_TARGET
-    script::Union{Nothing, String}=nothing
-    sysimage_build_args::Cmd=``
-    include_transitive_dependencies::Bool=true
-    base_sysimage::Union{Nothing, String}=nothing
-    soname=nothing
-    compat_level::String="major"
-    extra_precompiles::String = ""
-    package_dir::String = ""
-    app_dir::String = ""
-    executables::Union{Nothing, Vector{Pair{String, String}}}=nothing
-    force::Bool=false
-    c_driver_program::String=String(DEFAULT_EMBEDDING_WRAPPER)
-    include_lazy_artifacts::Bool=false
-    include_preferences::Bool=true
-    package_or_project::String = ""
-    dest_dir::String=""
-    lib_name=nothing
-    header_files::Vector{String} = String[]
-    julia_init_c_file::Union{Nothing, String, Vector{String}}=nothing
-    julia_init_h_file::Union{Nothing, String, Vector{String}}=nothing
-    version::Union{String,VersionNumber,Nothing}=nothing
+struct Conf
+    packages::Union{Nothing,Symbol,Vector{String},Vector{Symbol}}
+    sysimage_path::String
+    project::String
+    precompile_execution_file::Vector{String}
+    precompile_statements_file::Vector{String}
+    incremental::Bool
+    filter_stdlibs::Bool
+    cpu_target::String
+    script::Union{Nothing,String}
+    sysimage_build_args::Cmd
+    include_transitive_dependencies::Bool
+    base_sysimage::Union{Nothing,String}
+    soname::String
+    compat_level::String
+    extra_precompiles::String
+    package_dir::String
+    app_dir::String
+    executables::Union{Nothing,Vector{Pair{String,String}}}
+    force::Bool
+    c_driver_program::String
+    include_lazy_artifacts::Bool
+    include_preferences::Bool
+    package_or_project::String
+    dest_dir::String
+    lib_name::Union{Nothing, String}
+    header_files::Vector{String}
+    julia_init_c_file::Union{Nothing,String,Vector{String}}
+    julia_init_h_file::Union{Nothing,String,Vector{String}}
+    version::Union{Nothing,VersionNumber}
+end
+
+function Conf(;
+    packages::Union{Nothing,Symbol,Vector{String},Vector{Symbol}}=nothing,
+    sysimage_path::String="",
+    project::String=dirname(active_project()),
+    precompile_execution_file::Union{String,Vector{String}}=String[],
+    precompile_statements_file::Union{String,Vector{String}}=String[],
+    incremental::Bool=true,
+    filter_stdlibs::Bool=false,
+    cpu_target::String=NATIVE_CPU_TARGET,
+    script::Union{Nothing,String}=nothing,
+    sysimage_build_args::Cmd=``,
+    include_transitive_dependencies::Bool=true,
+    base_sysimage::Union{Nothing,String}=nothing,
+    soname=nothing,
+    compat_level::String="major",
+    extra_precompiles::String="",
+    package_dir::String="",
+    app_dir::String="",
+    executables::Union{Nothing,Vector{Pair{String,String}}}=nothing,
+    force::Bool=false,
+    c_driver_program::String=String(DEFAULT_EMBEDDING_WRAPPER),
+    include_lazy_artifacts::Bool=false,
+    include_preferences::Bool=true,
+    package_or_project::String="",
+    dest_dir::String="",
+    lib_name=nothing,
+    header_files::Vector{String}=String[],
+    julia_init_c_file::Union{Nothing,String,Vector{String}}=nothing,
+    julia_init_h_file::Union{Nothing,String,Vector{String}}=nothing,
+    version::Union{String,VersionNumber,Nothing}=nothing,
+)
+
+    if filter_stdlibs && incremental
+        error("must use `incremental=false` to use `filter_stdlibs=true`")
+    end
+
+    if isdir(sysimage_path)
+        error("The provided sysimage_path is a directory: $(sysimage_path). Please specify a full path including the sysimage filename.")
+    end
+
+    if soname === nothing && (Sys.isunix() && !Sys.isapple())
+        soname = basename(sysimage_path)
+    end
+
+    precompile_execution_file  = vcat(precompile_execution_file)
+    precompile_statements_file = vcat(precompile_statements_file)
+
+    if version isa String
+        version = parse(VersionNumber, version)
+    end
+
+    Conf(packages,
+        sysimage_path,
+        project,
+        precompile_execution_file,
+        precompile_statements_file,
+        incremental,
+        filter_stdlibs,
+        cpu_target,
+        script,
+        sysimage_build_args,
+        include_transitive_dependencies,
+        base_sysimage,
+        soname,
+        compat_level,
+        extra_precompiles,
+        package_dir,
+        app_dir,
+        executables,
+        force,
+        c_driver_program,
+        include_lazy_artifacts,
+        include_preferences,
+        package_or_project,
+        dest_dir,
+        lib_name,
+        header_files,
+        julia_init_c_file,
+        julia_init_h_file,
+        version)
+
 end
 
 
@@ -600,16 +683,6 @@ function create_sysimage(conf::Conf)
     # is found, we throw an error immediately, instead of making the user wait a while before the error is thrown.
     get_compiler_cmd()
 
-    if isdir(conf.sysimage_path)
-        error("The provided sysimage_path is a directory: $(conf.sysimage_path). Please specify a full path including the sysimage filename.")
-    end
-
-    if conf.filter_stdlibs && conf.incremental
-        error("must use `incremental=false` to use `filter_stdlibs=true`")
-    end
-
-    ctx = create_pkg_context(conf.project)
-
     packages = if conf.packages === nothing
         p = collect(keys(ctx.env.project.deps))
         if ctx.env.pkg !== nothing
@@ -619,9 +692,6 @@ function create_sysimage(conf::Conf)
     else
         string.(vcat(conf.packages))
     end
-
-    precompile_execution_file  = vcat(conf.precompile_execution_file)
-    precompile_statements_file = vcat(conf.precompile_statements_file)
 
     check_packages_in_project(ctx, packages)
 
@@ -688,8 +758,8 @@ function create_sysimage(conf::Conf)
     create_sysimg_object_file(object_file, packages, packages_sysimg;
                             conf.project,
                             base_sysimage,
-                            precompile_execution_file,
-                            precompile_statements_file,
+                            conf.precompile_execution_file,
+                            conf.precompile_statements_file,
                             conf.cpu_target,
                             conf.script,
                             conf.sysimage_build_args,
@@ -746,10 +816,6 @@ function create_sysimg_from_object_file(object_files::Vector{String},
                                         version,
                                         compat_level::String,
                                         soname::Union{Nothing, String})
-
-    if soname === nothing && (Sys.isunix() && !Sys.isapple())
-        soname = basename(sysimage_path)
-    end
     mkpath(dirname(sysimage_path))
     # Prevent compiler from stripping all symbols from the shared lib.
     o_file_flags = Sys.isapple() ? `-Wl,-all_load $object_files` : `-Wl,--whole-archive $object_files -Wl,--no-whole-archive`
@@ -921,9 +987,7 @@ end
 
 function create_app(conf::Conf)
     warn_official()
-    if conf.filter_stdlibs && conf.incremental
-        error("must use `incremental=false` to use `filter_stdlibs=true`")
-    end
+
     # We call this at the very beginning to make sure that the user has a compiler available. Therefore, if no compiler
     # is found, we throw an error immediately, instead of making the user wait a while before the error is thrown.
     get_compiler_cmd()
@@ -1170,10 +1234,6 @@ function create_library(conf::Conf)
         end
     end
 
-    if conf.version isa String
-        version = parse(VersionNumber, conf.version)
-    end
-
     ctx = create_pkg_context(conf.package_or_project)
     if ctx.env.pkg === nothing && conf.lib_name === nothing
         error("expected either package with a `name` and `uuid`, or non-empty `lib_name`")
@@ -1262,8 +1322,8 @@ end
 function create_sysimage_workaround(
                     ctx,
                     sysimage_path::String,
-                    precompile_execution_file::Union{String, Vector{String}},
-                    precompile_statements_file::Union{String, Vector{String}},
+                    precompile_execution_file::Vector{String},
+                    precompile_statements_file::Vector{String},
                     incremental::Bool,
                     filter_stdlibs::Bool,
                     cpu_target::String;
