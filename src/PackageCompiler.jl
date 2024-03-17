@@ -60,7 +60,7 @@ end
 
 struct Conf
     project::String
-    packages::Union{Nothing,Symbol,Vector{String},Vector{Symbol}}
+    packages::Union{Nothing, Vector{String}}
     sysimage_path::String
     precompile_execution_file::Vector{String}
     precompile_statements_file::Vector{String}
@@ -83,8 +83,8 @@ struct Conf
     dest_dir::String
     lib_name::Union{Nothing, String}
     header_files::Vector{String}
-    julia_init_c_file::Union{Nothing,String,Vector{String}}
-    julia_init_h_file::Union{Nothing,String,Vector{String}}
+    julia_init_c_file::Union{Nothing,Vector{String}}
+    julia_init_h_file::Union{Nothing,Vector{String}}
     version::Union{Nothing,VersionNumber}
 end
 
@@ -135,6 +135,25 @@ function Conf(;
 
     if version isa String
         version = parse(VersionNumber, version)
+    end
+
+    packages = if packages !== nothing
+        string.(vcat(packages))
+    end
+
+    if julia_init_c_file isa String
+        julia_init_c_file = [conf.julia_init_c_file]
+    end
+    if julia_init_h_file isa String
+        julia_init_h_file = [conf.julia_init_h_file]
+    end
+    # Add init header files to list of bundled header files if not already present
+    if julia_init_h_file !== nothing
+        for f in julia_init_h_file
+            if !(f in header_files)
+                push!(header_files, f)
+            end
+        end
     end
 
     Conf(
@@ -687,7 +706,7 @@ function create_sysimage(conf::Conf)
         end
         string.(vcat(p))
     else
-        string.(vcat(conf.packages))
+        conf.packages
     end
 
     check_packages_in_project(ctx, packages)
@@ -766,18 +785,10 @@ function create_sysimage(conf::Conf)
 
     
     if conf.julia_init_c_file !== nothing
-        if conf.julia_init_c_file isa String
-            julia_init_c_file = [conf.julia_init_c_file]
-        end
 
         mktempdir() do include_dir
             if conf.julia_init_h_file !== nothing
-                julia_init_h_file = if conf.julia_init_h_file isa String
-                    [conf.julia_init_h_file]
-                else
-                    conf.julia_init_h_file
-                end
-                for f in julia_init_h_file
+                for f in conf.julia_init_h_file
                     cp(f, joinpath(include_dir, basename(f)))
                 end
             end
@@ -1220,17 +1231,6 @@ function create_library(conf::Conf)
 
     warn_official()
 
-    # Add init header files to list of bundled header files if not already present
-    if conf.julia_init_h_file isa String
-        julia_init_h_file = [conf.julia_init_h_file]
-    end
-    header_files = String[]
-    for f in julia_init_h_file
-        if !(f in conf.header_files)
-            push!(header_files, f)
-        end
-    end
-
     ctx = create_pkg_context(conf.project)
     if ctx.env.pkg === nothing && conf.lib_name === nothing
         error("expected either package with a `name` and `uuid`, or non-empty `lib_name`")
@@ -1266,7 +1266,7 @@ function create_library(conf::Conf)
     create_sysimage_workaround(ctx, sysimg_path, conf.precompile_execution_file,
         conf.precompile_statements_file, conf.incremental, conf.filter_stdlibs, conf.cpu_target;
         conf.sysimage_build_args, conf.include_transitive_dependencies, conf.julia_init_c_file,
-        julia_init_h_file, conf.version, soname, conf.script, conf.base_sysimage)
+        conf.julia_init_h_file, conf.version, soname, conf.script, conf.base_sysimage)
 
     if conf.version !== nothing && Sys.isunix()
         cd(dirname(sysimg_path)) do
