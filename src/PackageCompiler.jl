@@ -74,7 +74,6 @@ struct Conf
     soname::String
     compat_level::String
     extra_precompiles::String
-    app_dir::String
     executables::Union{Nothing,Vector{Pair{String,String}}}
     force::Bool
     c_driver_program::String
@@ -104,7 +103,6 @@ function Conf(;
     soname=nothing,
     compat_level::String="major",
     extra_precompiles::String="",
-    app_dir::String="",
     executables::Union{Nothing,Vector{Pair{String,String}}}=nothing,
     force::Bool=false,
     c_driver_program::String=String(DEFAULT_EMBEDDING_WRAPPER),
@@ -142,10 +140,10 @@ function Conf(;
     end
 
     if julia_init_c_file isa String
-        julia_init_c_file = [conf.julia_init_c_file]
+        julia_init_c_file = [julia_init_c_file]
     end
     if julia_init_h_file isa String
-        julia_init_h_file = [conf.julia_init_h_file]
+        julia_init_h_file = [julia_init_h_file]
     end
     # Add init header files to list of bundled header files if not already present
     if julia_init_h_file !== nothing
@@ -172,7 +170,6 @@ function Conf(;
         soname,
         compat_level,
         extra_precompiles,
-        app_dir,
         executables,
         force,
         c_driver_program,
@@ -976,7 +973,7 @@ function create_app(package_dir::String,
                     include_preferences::Bool=true,
                     script::Union{Nothing, String}=nothing)
     conf = Conf(;project=package_dir,
-                 app_dir,
+                 dest_dir=app_dir,
                  executables,
                  precompile_execution_file,
                  precompile_statements_file,
@@ -1010,20 +1007,20 @@ function create_app(conf::Conf)
         conf.executables
     end
 
-    try_rm_dir(conf.app_dir; conf.force)
+    try_rm_dir(conf.dest_dir; conf.force)
     stdlibs = gather_stdlibs_project(ctx)
     if !conf.filter_stdlibs
         stdlibs = unique(vcat(stdlibs, stdlibs_in_sysimage()))
     end
-    bundle_julia_libraries(conf.app_dir, stdlibs)
-    bundle_julia_libexec(ctx, conf.app_dir)
-    bundle_julia_executable(conf.app_dir)
-    bundle_artifacts(ctx, conf.app_dir; conf.include_lazy_artifacts)
-    bundle_project(ctx, conf.app_dir)
-    conf.include_preferences && bundle_preferences(ctx, conf.app_dir)
-    bundle_cert(conf.app_dir)
+    bundle_julia_libraries(conf.dest_dir, stdlibs)
+    bundle_julia_libexec(ctx, conf.dest_dir)
+    bundle_julia_executable(conf.dest_dir)
+    bundle_artifacts(ctx, conf.dest_dir; conf.include_lazy_artifacts)
+    bundle_project(ctx, conf.dest_dir)
+    conf.include_preferences && bundle_preferences(ctx, conf.dest_dir)
+    bundle_cert(conf.dest_dir)
 
-    sysimage_path = joinpath(conf.app_dir, "lib", "julia", "sys." * Libdl.dlext)
+    sysimage_path = joinpath(conf.dest_dir, "lib", "julia", "sys." * Libdl.dlext)
 
     package_name = ctx.env.pkg.name
     project = dirname(ctx.env.project_file)
@@ -1050,7 +1047,7 @@ function create_app(conf::Conf)
                     conf.script)
 
     for (app_name, julia_main) in executables
-        create_executable_from_sysimg(joinpath(conf.app_dir, "bin", app_name), conf.c_driver_program, string(package_name, ".", julia_main))
+        create_executable_from_sysimg(joinpath(conf.dest_dir, "bin", app_name), conf.c_driver_program, string(package_name, ".", julia_main))
     end
 end
 
