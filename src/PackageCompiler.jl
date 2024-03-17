@@ -85,6 +85,7 @@ struct Conf
     julia_init_c_file::Union{Nothing,Vector{String}}
     julia_init_h_file::Union{Nothing,Vector{String}}
     version::Union{Nothing,VersionNumber}
+    pkg_ctx
 end
 
 function Conf(;
@@ -154,6 +155,18 @@ function Conf(;
         end
     end
 
+    pkg_ctx = create_pkg_context(project)
+
+    if packages === nothing
+        p = collect(keys(pkg_ctx.env.project.deps))
+        if pkg_ctx.env.pkg !== nothing
+            push!(p, pkg_ctx.env.pkg.name)
+        end
+        packages = string.(vcat(p))
+    end
+
+    check_packages_in_project(pkg_ctx, packages)
+
     Conf(
         project,    
         packages,
@@ -180,7 +193,8 @@ function Conf(;
         header_files,
         julia_init_c_file,
         julia_init_h_file,
-        version)
+        version,
+        pkg_ctx)
 
 end
 
@@ -694,36 +708,22 @@ function create_sysimage(conf::Conf)
     # is found, we throw an error immediately, instead of making the user wait a while before the error is thrown.
     get_compiler_cmd()
 
-    ctx = create_pkg_context(conf.project)
-
-    packages = if conf.packages === nothing
-        p = collect(keys(ctx.env.project.deps))
-        if ctx.env.pkg !== nothing
-            push!(p, ctx.env.pkg.name)
-        end
-        string.(vcat(p))
-    else
-        conf.packages
-    end
-
-    check_packages_in_project(ctx, packages)
-
     # Instantiate the project
 
     @debug "instantiating project at $(repr(conf.project))"
-    Pkg.instantiate(ctx, verbose=true, allow_autoprecomp = false)
+    Pkg.instantiate(conf.pkg_ctx, verbose=true, allow_autoprecomp = false)
 
     if !conf.incremental
         if conf.base_sysimage !== nothing
             error("cannot specify `base_sysimage`  when `incremental=false`")
         end
-        sysimage_stdlibs = conf.filter_stdlibs ? gather_stdlibs_project(ctx) : stdlibs_in_sysimage()
+        sysimage_stdlibs = conf.filter_stdlibs ? gather_stdlibs_project(conf.pkg_ctx) : stdlibs_in_sysimage()
         base_sysimage = create_fresh_base_sysimage(sysimage_stdlibs; conf.cpu_target, conf.sysimage_build_args)
     else
         base_sysimage = something(conf.base_sysimage, unsafe_string(Base.JLOptions().image_file))
     end
 
-    ensurecompiled(conf.project, packages, base_sysimage)
+    ensurecompiled(conf.project, conf.packages, base_sysimage)
 
     packages_sysimg = Set{Base.PkgId}()
 
@@ -733,13 +733,13 @@ function create_sysimage(conf::Conf)
         # collect their dependencies, recursively.
 
         frontier = Set{Base.PkgId}()
-        deps = ctx.env.project.deps
-        for pkg in packages
+        deps = conf.pkg_ctx.env.project.deps
+        for pkg in conf.packages
             # Add all dependencies of the package
-            if ctx.env.pkg !== nothing && pkg == ctx.env.pkg.name
-                push!(frontier, Base.PkgId(ctx.env.pkg.uuid, pkg))
+            if conf.pkg_ctx.env.pkg !== nothing && pkg == conf.pkg_ctx.env.pkg.name
+                push!(frontier, Base.PkgId(conf.pkg_ctx.env.pkg.uuid, pkg))
             else
-                uuid = ctx.env.project.deps[pkg]
+                uuid = conf.pkg_ctx.env.project.deps[pkg]
                 push!(frontier, Base.PkgId(uuid, pkg))
             end
         end
@@ -747,10 +747,10 @@ function create_sysimage(conf::Conf)
         new_frontier = Set{Base.PkgId}()
         while !(isempty(frontier))
             for pkgid in frontier
-                deps = if ctx.env.pkg !== nothing && pkgid.uuid == ctx.env.pkg.uuid
-                    ctx.env.project.deps
+                deps = if conf.pkg_ctx.env.pkg !== nothing && pkgid.uuid == conf.pkg_ctx.env.pkg.uuid
+                    conf.pkg_ctx.env.project.deps
                 else
-                    ctx.env.manifest[pkgid.uuid].deps
+                    conf.pkg_ctx.env.manifest[pkgid.uuid].deps
                 end
                 pkgid_deps = [Base.PkgId(uuid, name) for (name, uuid) in deps]
                 for pkgid_dep in pkgid_deps
@@ -768,7 +768,7 @@ function create_sysimage(conf::Conf)
     # Create the sysimage
     object_file = tempname() * ".o"
 
-    create_sysimg_object_file(object_file, packages, packages_sysimg;
+    create_sysimg_object_file(object_file, conf.packages, packages_sysimg;
                             conf.project,
                             base_sysimage,
                             conf.precompile_execution_file,
@@ -789,7 +789,7 @@ function create_sysimage(conf::Conf)
                     cp(f, joinpath(include_dir, basename(f)))
                 end
             end
-            for f in julia_init_c_file
+            for f in conf.julia_init_c_file
                 filename = compile_c_init_julia(f, basename(conf.sysimage_path), include_dir)
                 push!(object_files, filename)
             end
