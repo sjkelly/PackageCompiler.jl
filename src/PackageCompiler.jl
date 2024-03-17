@@ -59,9 +59,9 @@ end
 
 
 struct Conf
+    project::String
     packages::Union{Nothing,Symbol,Vector{String},Vector{Symbol}}
     sysimage_path::String
-    project::String
     precompile_execution_file::Vector{String}
     precompile_statements_file::Vector{String}
     incremental::Bool
@@ -74,14 +74,12 @@ struct Conf
     soname::String
     compat_level::String
     extra_precompiles::String
-    package_dir::String
     app_dir::String
     executables::Union{Nothing,Vector{Pair{String,String}}}
     force::Bool
     c_driver_program::String
     include_lazy_artifacts::Bool
     include_preferences::Bool
-    package_or_project::String
     dest_dir::String
     lib_name::Union{Nothing, String}
     header_files::Vector{String}
@@ -106,14 +104,12 @@ function Conf(;
     soname=nothing,
     compat_level::String="major",
     extra_precompiles::String="",
-    package_dir::String="",
     app_dir::String="",
     executables::Union{Nothing,Vector{Pair{String,String}}}=nothing,
     force::Bool=false,
     c_driver_program::String=String(DEFAULT_EMBEDDING_WRAPPER),
     include_lazy_artifacts::Bool=false,
     include_preferences::Bool=true,
-    package_or_project::String="",
     dest_dir::String="",
     lib_name=nothing,
     header_files::Vector{String}=String[],
@@ -141,9 +137,10 @@ function Conf(;
         version = parse(VersionNumber, version)
     end
 
-    Conf(packages,
+    Conf(
+        project,    
+        packages,
         sysimage_path,
-        project,
         precompile_execution_file,
         precompile_statements_file,
         incremental,
@@ -156,14 +153,12 @@ function Conf(;
         soname,
         compat_level,
         extra_precompiles,
-        package_dir,
         app_dir,
         executables,
         force,
         c_driver_program,
         include_lazy_artifacts,
         include_preferences,
-        package_or_project,
         dest_dir,
         lib_name,
         header_files,
@@ -683,6 +678,8 @@ function create_sysimage(conf::Conf)
     # is found, we throw an error immediately, instead of making the user wait a while before the error is thrown.
     get_compiler_cmd()
 
+    ctx = create_pkg_context(conf.project)
+
     packages = if conf.packages === nothing
         p = collect(keys(ctx.env.project.deps))
         if ctx.env.pkg !== nothing
@@ -967,7 +964,7 @@ function create_app(package_dir::String,
                     include_transitive_dependencies::Bool=true,
                     include_preferences::Bool=true,
                     script::Union{Nothing, String}=nothing)
-    conf = Conf(;package_dir,
+    conf = Conf(;project=package_dir,
                  app_dir,
                  executables,
                  precompile_execution_file,
@@ -992,7 +989,7 @@ function create_app(conf::Conf)
     # is found, we throw an error immediately, instead of making the user wait a while before the error is thrown.
     get_compiler_cmd()
 
-    ctx = create_pkg_context(conf.package_dir)
+    ctx = create_pkg_context(conf.project)
     ctx.env.pkg === nothing && error("expected package to have a `name` and `uuid`")
     Pkg.instantiate(ctx, verbose=true, allow_autoprecomp = false)
 
@@ -1162,7 +1159,7 @@ compiler (can also include extra arguments to the compiler, like `-g`).
   packages do not load all their dependencies when themselves are loaded. Defaults to `true`.
 
 - `include_preferences::Bool`: If `true`, store all preferences visible by the project in
-  `project_or_package` in the library bundle. Defaults to `true`.
+  `package_or_project` in the library bundle. Defaults to `true`.
 
 - `script::String`: Path to a file that gets executed in the `--output-o` process.
 
@@ -1195,7 +1192,7 @@ function create_library(package_or_project::String,
                         base_sysimage::Union{Nothing, String}=nothing
                         )
 
-    conf = Conf(;package_or_project,
+    conf = Conf(;project=package_or_project,
             dest_dir,
             lib_name,
             precompile_execution_file,
@@ -1234,7 +1231,7 @@ function create_library(conf::Conf)
         end
     end
 
-    ctx = create_pkg_context(conf.package_or_project)
+    ctx = create_pkg_context(conf.project)
     if ctx.env.pkg === nothing && conf.lib_name === nothing
         error("expected either package with a `name` and `uuid`, or non-empty `lib_name`")
     end
