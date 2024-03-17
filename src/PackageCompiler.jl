@@ -58,9 +58,46 @@ function march()
 end
 
 
+"""
+    Conf
+
+Struct containing configuration options for building a Julia package compiler sysimage.
+
+# Fields:
+
+- `project::String`: Name of the project.
+- `packages::Union{Nothing, Vector{String}}`: Packages to include in the sysimage.
+- `sysimage_path::String`: Path to write the built sysimage. 
+- `precompile_execution_file::Vector{String}`: Julia source files to precompile.
+- `precompile_statements_file::Vector{String}`: Julia statements to precompile.
+- `incremental::Bool`: Whether to build incrementally.
+- `filter_stdlibs::Bool`: Whether to filter stdlibs from the sysimage.
+- `cpu_target::String`: CPU target to optimize for.
+- `script::Union{Nothing,String}`: Path to driver script for executables.
+- `sysimage_build_args::Cmd`: Arguments to pass to `Base.compilecache`.
+- `include_transitive_dependencies::Bool`: Whether to include transitive deps.  
+- `base_sysimage::Union{Nothing,String}`: Path to base sysimage to use.
+- `soname::String`: Soname for shared library.
+- `compat_level::String`: Julia compatibility level.
+- `extra_precompiles::String`: Extra precompiles.
+- `executables::Union{Nothing,Vector{Pair{String,String}}}`: Executables to build.
+- `force::Bool`: Whether to force rebuild.
+- `c_driver_program::String`: C driver program for executables.
+- `include_lazy_artifacts::Bool`: Whether to include lazy artifacts.
+- `include_preferences::Bool`: Whether to include preferences.
+- `dest_dir::String`: Directory to write build artifacts.
+- `lib_name::Union{Nothing, String}`: Name for built shared library.
+- `header_files::Vector{String}`: Header files to make available to C.
+- `julia_init_c_file::Union{Nothing,Vector{String}}`: Custom Julia init C file.
+- `julia_init_h_file::Union{Nothing,Vector{String}}`: Custom Julia init header file.
+- `version::Union{Nothing,VersionNumber}`: Julia version to build against.
+- `pkg_ctx`: Package context.
+- `packages_sysimg::Set{Base.PkgId}`: Packages included in sysimage.
+- `sysimg_stdlibs`: Stdlibs included in sysimage.
+"""
 struct Conf
     project::String
-    packages::Union{Nothing, Vector{String}}
+    packages::Union{Nothing,Vector{String}}
     sysimage_path::String
     precompile_execution_file::Vector{String}
     precompile_statements_file::Vector{String}
@@ -80,15 +117,51 @@ struct Conf
     include_lazy_artifacts::Bool
     include_preferences::Bool
     dest_dir::String
-    lib_name::Union{Nothing, String}
+    lib_name::Union{Nothing,String}
     header_files::Vector{String}
     julia_init_c_file::Union{Nothing,Vector{String}}
     julia_init_h_file::Union{Nothing,Vector{String}}
     version::Union{Nothing,VersionNumber}
     pkg_ctx
     packages_sysimg::Set{Base.PkgId}
+    sysimg_stdlibs
 end
 
+# Conf struct constructor
+#
+# Construct a PackageCompiler.Conf struct to hold configuration options
+# for building a sysimage.
+#
+# Keyword arguments:
+# - `packages`: Packages to include in the sysimage.
+# - `sysimage_path`: Path to write the built sysimage. 
+# - `project`: Project directory to use for resolving packages.
+# - `precompile_execution_file`: File to write precompile execution to.
+# - `precompile_statements_file`: File to write precompile statements to.
+# - `incremental`: Build incrementally.
+# - `filter_stdlibs`: Filter stdlibs from the sysimage.
+# - `cpu_target`: CPU target to compile for.  
+# - `script`: Build script to run before building sysimage.
+# - `sysimage_build_args`: Arguments to pass to sysimage builder.
+# - `include_transitive_dependencies`: Whether to include transitive dependencies.  
+# - `base_sysimage`: Base sysimage to build on top of.
+# - `soname`: Soname for shared library.
+# - `compat_level`: Julia compatibility level.
+# - `extra_precompiles`: Extra precompiles.
+# - `executables`: Executables to build.
+# - `force`: Whether to force rebuild.
+# - `c_driver_program`: C driver program for executables.
+# - `include_lazy_artifacts`: Whether to include lazy artifacts.
+# - `include_preferences`: Whether to include preferences.
+# - `dest_dir`: Directory to write build artifacts.
+# - `lib_name`: Name for built shared library. 
+# - `header_files`: Header files to make available to C.
+# - `julia_init_c_file`: Custom Julia init C file.
+# - `julia_init_h_file`: Custom Julia init header file.
+# - `version`: Julia version to build against.
+# - `pkg_ctx`: Package context.
+# - `packages_sysimg`: Packages included in sysimage.
+# - `sysimg_stdlibs`: Stdlibs included in sysimage.
 function Conf(;
     packages::Union{Nothing,Symbol,Vector{String},Vector{Symbol}}=nothing,
     sysimage_path::String="",
@@ -211,6 +284,8 @@ function Conf(;
         end
     end
 
+    sysimg_stdlibs = filter_stdlibs ? gather_stdlibs_project(pkg_ctx) : stdlibs_in_sysimage()
+
     Conf(
         project,    
         packages,
@@ -239,7 +314,8 @@ function Conf(;
         julia_init_h_file,
         version,
         pkg_ctx,
-        packages_sysimg)
+        packages_sysimg,
+        sysimg_stdlibs)
 
 end
 
@@ -737,6 +813,13 @@ function create_sysimage(packages::Union{Nothing, Symbol, Vector{String}, Vector
 end
 
 
+"""
+    create_sysimage(conf::Conf)
+
+Create a sysimage from the given configuration. This handles compiling
+all the necessary code, generating the object files, and linking
+the final sysimage.
+"""
 function create_sysimage(conf::Conf)
     # We call this at the very beginning to make sure that the user has a compiler available. Therefore, if no compiler
     # is found, we throw an error immediately, instead of making the user wait a while before the error is thrown.
@@ -746,8 +829,7 @@ function create_sysimage(conf::Conf)
         if conf.base_sysimage !== nothing
             error("cannot specify `base_sysimage`  when `incremental=false`")
         end
-        sysimage_stdlibs = conf.filter_stdlibs ? gather_stdlibs_project(conf.pkg_ctx) : stdlibs_in_sysimage()
-        create_fresh_base_sysimage(sysimage_stdlibs; conf.cpu_target, conf.sysimage_build_args)
+        create_fresh_base_sysimage(conf.sysimg_stdlibs; conf.cpu_target, conf.sysimage_build_args)
     else
         something(conf.base_sysimage, unsafe_string(Base.JLOptions().image_file))
     end
@@ -759,7 +841,7 @@ function create_sysimage(conf::Conf)
 
     create_sysimg_object_file(object_file, base_sysimage, conf)
     object_files = [object_file]
-    
+
     if conf.julia_init_c_file !== nothing
 
         mktempdir() do include_dir
@@ -776,10 +858,10 @@ function create_sysimage(conf::Conf)
     end
 
     create_sysimg_from_object_file(object_files,
-                                conf.sysimage_path;
-                                conf.compat_level,
-                                conf.version,
-                                conf.soname)
+        conf.sysimage_path;
+        conf.compat_level,
+        conf.version,
+        conf.soname)
 
     rm(object_file; force=true)
 
@@ -969,6 +1051,10 @@ function create_app(package_dir::String,
     create_app(conf)
 end
 
+"""
+    create_app(conf::Conf)
+
+"""
 function create_app(conf::Conf)
     warn_official()
 
@@ -978,7 +1064,7 @@ function create_app(conf::Conf)
 
     ctx = create_pkg_context(conf.project)
     ctx.env.pkg === nothing && error("expected package to have a `name` and `uuid`")
-    Pkg.instantiate(ctx, verbose=true, allow_autoprecomp = false)
+    Pkg.instantiate(ctx, verbose=true, allow_autoprecomp=false)
 
     executables = if conf.executables === nothing
         [ctx.env.pkg.name => "julia_main"]
@@ -987,11 +1073,7 @@ function create_app(conf::Conf)
     end
 
     try_rm_dir(conf.dest_dir; conf.force)
-    stdlibs = gather_stdlibs_project(ctx)
-    if !conf.filter_stdlibs
-        stdlibs = unique(vcat(stdlibs, stdlibs_in_sysimage()))
-    end
-    bundle_julia_libraries(conf.dest_dir, stdlibs)
+    bundle_julia_libraries(conf.dest_dir, conf.sysimg_stdlibs)
     bundle_julia_libexec(ctx, conf.dest_dir)
     bundle_julia_executable(conf.dest_dir)
     bundle_artifacts(ctx, conf.dest_dir; conf.include_lazy_artifacts)
@@ -1015,15 +1097,15 @@ function create_app(conf::Conf)
     push!(precompiles, "precompile(Tuple{typeof(popfirst!), Vector{String}})")
 
     create_sysimage([package_name]; sysimage_path, project,
-                    conf.incremental,
-                    conf.filter_stdlibs,
-                    conf.precompile_execution_file,
-                    conf.precompile_statements_file,
-                    conf.cpu_target,
-                    conf.sysimage_build_args,
-                    conf.include_transitive_dependencies,
-                    extra_precompiles = join(precompiles, "\n"),
-                    conf.script)
+        conf.incremental,
+        conf.filter_stdlibs,
+        conf.precompile_execution_file,
+        conf.precompile_statements_file,
+        conf.cpu_target,
+        conf.sysimage_build_args,
+        conf.include_transitive_dependencies,
+        extra_precompiles=join(precompiles, "\n"),
+        conf.script)
 
     for (app_name, julia_main) in executables
         create_executable_from_sysimg(joinpath(conf.dest_dir, "bin", app_name), conf.c_driver_program, string(package_name, ".", julia_main))
@@ -1203,6 +1285,14 @@ function create_library(package_or_project::String,
     create_library(conf)
 end
 
+"""
+    create_library(conf::Conf)
+
+Creates a library bundle for the given package or project configuration `conf`.
+
+This bundles all package artifacts, dependencies, sysimage, etc into an executable
+library folder according to the given configuration.
+"""
 function create_library(conf::Conf)
 
     warn_official()
@@ -1211,7 +1301,7 @@ function create_library(conf::Conf)
     if ctx.env.pkg === nothing && conf.lib_name === nothing
         error("expected either package with a `name` and `uuid`, or non-empty `lib_name`")
     end
-    Pkg.instantiate(ctx, verbose=true, allow_autoprecomp = false)
+    Pkg.instantiate(ctx, verbose=true, allow_autoprecomp=false)
 
     lib_name = if conf.lib_name === nothing
         ctx.env.pkg.name
@@ -1220,11 +1310,7 @@ function create_library(conf::Conf)
     end
     try_rm_dir(conf.dest_dir; conf.force)
     mkpath(conf.dest_dir)
-    stdlibs = gather_stdlibs_project(ctx)
-    if !conf.filter_stdlibs
-        stdlibs = unique(vcat(stdlibs, stdlibs_in_sysimage()))
-    end
-    bundle_julia_libraries(conf.dest_dir, stdlibs)
+    bundle_julia_libraries(conf.dest_dir, conf.sysimg_stdlibs)
     bundle_julia_libexec(ctx, conf.dest_dir)
     bundle_artifacts(ctx, conf.dest_dir; conf.include_lazy_artifacts)
     bundle_headers(conf.dest_dir, conf.header_files)
